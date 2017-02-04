@@ -1,0 +1,41 @@
+#!/bin/bash
+PATH=$PATH:/opt/vc/bin:/root:/usr/local/bin/
+# choose a memdisk here to avoid wearing out sd card
+CAM_OUT="/tmp/cam_out.jpg"
+OCR_DEBUG_OUT="/tmp/ocr_debug.jpg"
+TOKEN1="/tmp/token1"
+TOKEN2="/tmp/token2"
+
+
+i2cset -y 1 0x70 0x02 0x00
+i2cset -y 1 0x70 0x04 0x16
+i2cset -y 1 0x70 0x05 0x16
+i2cset -y 1 0x70 0x07 0x00
+
+# turn all leds on
+i2cset -y 1 0x70 0x00 0x5a
+# take picture
+raspistill -mm backlit -drc high -t 2 -q 10 -n -o $CAM_OUT
+# turn all leds off
+i2cset -y 1 0x70 0x00 0x00
+
+ROT=2
+C_X=360
+C_Y=370
+C_W=1470
+C_H=400
+SHEAR=31
+IGNORE=15
+N=20
+THR=26
+DEBUG=""
+
+if [ $1 = "--debug" ]; then
+    DEBUG="--debug-image=$OCR_DEBUG_OUT"
+fi
+
+ssocr $DEBUG -n $N -t $THR -i $IGNORE -d 6 rotate $ROT crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 7 opening 3 $CAM_OUT 2>&1 | tee $TOKEN1
+
+if grep -q -E "[0-9]{6}" $TOKEN1; then
+    cp $TOKEN1 $TOKEN2
+fi
