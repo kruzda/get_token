@@ -16,7 +16,7 @@ i2cset -y 1 0x70 0x07 0x24
 i2cset -y 1 0x70 0x00 0x5a
 echo -n "Ready.."
 # take picture
-raspistill -mm backlit -ifx blur -drc high -q 95 -n -o $CAM_OUT
+raspistill -mm backlit -ifx blur -drc high -q 95 -n -o $CAM_OUT -t 3
 echo -n "Steady.."
 sleep 1
 echo -n "Go! "
@@ -25,10 +25,10 @@ i2cset -y 1 0x70 0x00 0x00
 
 ROT=3
 C_X=360
-C_Y=350
+C_Y=320
 C_W=1470
 C_H=400
-SHEAR=31
+SHEAR=35
 IGNORE=15
 N=20
 THR=26
