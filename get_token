@@ -5,14 +5,17 @@ CAM_OUT="/tmp/cam_out.jpg"
 OCR_DEBUG_OUT="/tmp/ocr_debug.jpg"
 TOKEN1="/tmp/token1"
 TOKEN2="/tmp/token2"
-DEBUG=""
+DEBUG=0
+DEBUGSTR=""
 DELAY=0
 OCCURENCE=0
 CYCLETOTAL=0
 SYNCED=0
 
-if [ $1 = "--debug" ]; then
-    DEBUG="--debug-image=$OCR_DEBUG_OUT"
+if [ $# -gt 0 ] && [ $1 = "--debug" ]; then
+    echo "debug mode"
+    DEBUG=1
+    DEBUGSTR="--debug-image=$OCR_DEBUG_OUT"
 fi
 
 i2cset -y 1 0x70 0x02 0x00
@@ -35,7 +38,7 @@ while true; do
 
     ROT=3
     C_X=360
-    C_Y=320
+    C_Y=337
     C_W=1470
     C_H=400
     SHEAR=35
@@ -44,7 +47,7 @@ while true; do
     THR=26
 
     SSOCR_STARTED_AT=$(date +%s)
-    ssocr $DEBUG -d 6 -T rotate $ROT grayscale crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 3 remove_isolated opening 3 $CAM_OUT 2>&1 >$TOKEN1
+    ssocr $DEBUGSTR -d 6 -T rotate $ROT grayscale crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 3 remove_isolated opening 3 $CAM_OUT 2>&1 >$TOKEN1
     echo -n $(cat $TOKEN1)
 
     FOUND_A_NUMBER_AT=$(date +%s)
@@ -66,7 +69,7 @@ while true; do
                    LOCAL_DELAY=$(( 60-$CYCLETOTAL+60-$TOTAL ))
                    echo ""
                    echo -n "saw this number $(($OCCURENCE+1)) times in $CYCLETOTAL seconds - sleeping for $LOCAL_DELAY seconds"
-                   echo " s" >>$TOKEN2
+                   #echo " s" >>$TOKEN2
                    sleep $LOCAL_DELAY
                    SYNCED=1
                    OCCURENCE=0
@@ -83,7 +86,9 @@ while true; do
         fi
         cp $TOKEN1 $TOKEN2
     else
-        cp $OCR_DEBUG_OUT /tmp/$(date +%s)--ocr.jpg
+	if [ $DEBUG -eq 1 ]; then
+	    cp $OCR_DEBUG_OUT /tmp/$(date +%s)--ocr.jpg
+	fi
         CYCLETOTAL=0
         OCCURENCE=0
         DELAY=0
