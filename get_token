@@ -5,41 +5,93 @@ CAM_OUT="/tmp/cam_out.jpg"
 OCR_DEBUG_OUT="/tmp/ocr_debug.jpg"
 TOKEN1="/tmp/token1"
 TOKEN2="/tmp/token2"
+DEBUG=""
+DELAY=0
+OCCURENCE=0
+CYCLETOTAL=0
+SYNCED=0
 
+if [ $1 = "--debug" ]; then
+    DEBUG="--debug-image=$OCR_DEBUG_OUT"
+fi
 
 i2cset -y 1 0x70 0x02 0x00
 i2cset -y 1 0x70 0x04 0x00
 i2cset -y 1 0x70 0x05 0x32
 i2cset -y 1 0x70 0x07 0x24
 
-# turn all leds on
-i2cset -y 1 0x70 0x00 0x5a
-echo -n "Ready.."
-# take picture
-raspistill -mm backlit -ifx blur -drc high -q 95 -n -o $CAM_OUT -t 3
-echo -n "Steady.."
-sleep 1
-echo -n "Go! "
-# turn all leds off
-i2cset -y 1 0x70 0x00 0x00
+while true; do
+    sleep $DELAY
+    # turn all leds on
+    i2cset -y 1 0x70 0x00 0x5a
+    STARTED_AT=$(date +%s)
+    echo -n "Ready.."
+    # take picture
+    raspistill -mm backlit -ifx blur -drc high -q 95 -n -o $CAM_OUT -t 3
+    echo -n "Steady.."
+    # turn all leds off
+    i2cset -y 1 0x70 0x00 0x00
+    echo -n "Go! "
 
-ROT=3
-C_X=360
-C_Y=320
-C_W=1470
-C_H=400
-SHEAR=35
-IGNORE=15
-N=20
-THR=26
-DEBUG=""
+    ROT=3
+    C_X=360
+    C_Y=320
+    C_W=1470
+    C_H=400
+    SHEAR=35
+    IGNORE=15
+    N=20
+    THR=26
 
-if [ $1 = "--debug" ]; then
-    DEBUG="--debug-image=$OCR_DEBUG_OUT"
-fi
+    SSOCR_STARTED_AT=$(date +%s)
+    ssocr $DEBUG -d 6 -T rotate $ROT grayscale crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 3 remove_isolated opening 3 $CAM_OUT 2>&1 >$TOKEN1
+    echo -n $(cat $TOKEN1)
 
-ssocr $DEBUG -d 6 -T rotate $ROT grayscale crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 3 remove_isolated opening 3 $CAM_OUT 2>&1 | tee $TOKEN1
+    FOUND_A_NUMBER_AT=$(date +%s)
+    TOTAL=$(( $FOUND_A_NUMBER_AT-$STARTED_AT ))
 
-if grep -q -E "[0-9]{6}" $TOKEN1; then
-    cp $TOKEN1 $TOKEN2
-fi
+    if grep -q -E "[0-9]{6}" $TOKEN1; then
+        if [ -e $TOKEN2 ] && grep -q -E $(cat $TOKEN2) $TOKEN1 && [ $SYNCED -eq 0 ]; then
+            OCCURENCE=$(( OCCURENCE+1 ))
+            CYCLETOTAL=$(( $CYCLETOTAL+$TOTAL ))
+            case $OCCURENCE in
+                2)
+                   LOCAL_DELAY=1
+                   echo ""
+                   echo -n "saw this number $(($OCCURENCE+1)) times in $CYCLETOTAL seconds - sleeping for $LOCAL_DELAY second(s)"
+                   CYCLETOTAL=$(( $CYCLETOTAL+$LOCAL_DELAY ))
+                   sleep $LOCAL_DELAY
+                ;;
+                3)
+                   LOCAL_DELAY=$(( 60-$CYCLETOTAL+60-$TOTAL ))
+                   echo ""
+                   echo -n "saw this number $(($OCCURENCE+1)) times in $CYCLETOTAL seconds - sleeping for $LOCAL_DELAY seconds"
+                   echo " s" >>$TOKEN2
+                   sleep $LOCAL_DELAY
+                   SYNCED=1
+                   OCCURENCE=0
+                   DELAY=$(( 60-$TOTAL ))
+                   # signal that the token is likely stale
+                ;;
+            esac
+        else
+            if [ $SYNCED -eq 1 ]; then
+                DELAY=$(( 60-$TOTAL ))
+            fi
+            CYCLETOTAL=0
+            OCCURENCE=0
+        fi
+        cp $TOKEN1 $TOKEN2
+    else
+        cp $OCR_DEBUG_OUT /tmp/$(date +%s)--ocr.jpg
+        CYCLETOTAL=0
+        OCCURENCE=0
+        DELAY=0
+        SYNCED=0
+	echo -n " s" >>$TOKEN2
+        #cp $CAM_OUT /tmp/$(date +%s)-pic.jpg
+    fi
+
+    echo ""
+    #echo "pic: $(( $SSOCR_STARTED_AT-$STARTED_AT )) ocr: $(( $FOUND_A_NUMBER_AT-$SSOCR_STARTED_AT )) total: $(( $FOUND_A_NUMBER_AT-$STARTED_AT ))"
+done
