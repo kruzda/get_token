@@ -25,7 +25,7 @@ i2cset -y 1 0x70 0x00 0x00
 
 ROT=3
 C_X=360
-C_Y=320
+C_Y=336
 C_W=1470
 C_H=400
 SHEAR=35
@@ -38,7 +38,7 @@ if [ $1 = "--debug" ]; then
     DEBUG="--debug-image=$OCR_DEBUG_OUT"
 fi
 
-ssocr $DEBUG -d 6 -T rotate $ROT grayscale crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 3 remove_isolated opening 3 $CAM_OUT 2>&1 | tee $TOKEN1
+ssocr $DEBUG -T -d 6 rotate $ROT grayscale crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 3 remove_isolated opening 4 $CAM_OUT 2>&1 | tee $TOKEN1
 
 if grep -q -E "[0-9]{6}" $TOKEN1; then
     cp $TOKEN1 $TOKEN2
