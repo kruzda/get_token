@@ -3,100 +3,89 @@ PATH=$PATH:/opt/vc/bin:/root:/usr/local/bin/
 # choose a memdisk here to avoid wearing out sd card
 CAM_OUT="/tmp/cam_out.jpg"
 OCR_DEBUG_OUT="/tmp/ocr_debug.jpg"
+OCR_META="/tmp/ocr_meta"
 TOKEN1="/tmp/token1"
 TOKEN2="/tmp/token2"
-DEBUG=0
-DEBUGSTR=""
-DELAY=0
-OCCURENCE=0
-CYCLETOTAL=0
-SYNCED=0
+# "precision" when syncing
+# the amount of samples used for the average in determining the token change phase
+c=10
 
-if [ $# -gt 0 ] && [ $1 = "--debug" ]; then
-    echo "debug mode"
-    DEBUG=1
-    DEBUGSTR="--debug-image=$OCR_DEBUG_OUT"
+if [ ! -e $OCR_META ]; then
+    touch $OCR_META
 fi
 
 i2cset -y 1 0x70 0x02 0x00
-i2cset -y 1 0x70 0x04 0x00
-i2cset -y 1 0x70 0x05 0x32
-i2cset -y 1 0x70 0x07 0x24
+i2cset -y 1 0x70 0x04 0xD0
+i2cset -y 1 0x70 0x05 0x12
+i2cset -y 1 0x70 0x07 0x16
 
-while true; do
-    sleep $DELAY
-    # turn all leds on
-    i2cset -y 1 0x70 0x00 0x5a
-    STARTED_AT=$(date +%s)
-    echo -n "Ready.."
-    # take picture
-    raspistill -mm backlit -ifx blur -drc high -q 95 -n -o $CAM_OUT -t 3
-    echo -n "Steady.."
-    # turn all leds off
-    i2cset -y 1 0x70 0x00 0x00
-    echo -n "Go! "
+# turn all leds on
+i2cset -y 1 0x70 0x00 0x5a
+#echo -n "flash. "
+# take picture
+raspistill -q 95 -n -drc high -o $CAM_OUT -t 3
+#echo -n "snap. "
+# turn all leds off
+i2cset -y 1 0x70 0x00 0x00
 
-    ROT=3
-    C_X=360
-    C_Y=337
-    C_W=1470
-    C_H=400
-    SHEAR=35
-    IGNORE=15
-    N=20
-    THR=26
+ROT=2
+C_X=150
+C_Y=730
+C_W=1380
+C_H=390
+SHEAR=0
+IGNORE=10
+N=20
+THR=27
+DEBUG=""
 
-    SSOCR_STARTED_AT=$(date +%s)
-    ssocr $DEBUGSTR -d 6 -T rotate $ROT grayscale crop $C_X $C_Y $C_W $C_H shear $SHEAR keep_pixels_filter 3 remove_isolated opening 3 $CAM_OUT 2>&1 >$TOKEN1
-    echo -n $(cat $TOKEN1)
+if [ $1 = "--debug" ]; then
+    DEBUG="--debug-image=$OCR_DEBUG_OUT"
+fi
 
-    FOUND_A_NUMBER_AT=$(date +%s)
-    TOTAL=$(( $FOUND_A_NUMBER_AT-$STARTED_AT ))
+mogrify -crop "${C_W}x${C_H}+${C_X}+${C_Y}" -scale 25% $CAM_OUT
+#ssocr $DEBUG -T -d 6 -i $IGNORE rotate $ROT crop $C_X $C_Y $C_W $C_H shear $SHEAR remove_isolated opening 3 white_border 17 $CAM_OUT 2>&1 | tee $TOKEN1 &
+#ssocr $DEBUG -T -d 6 rotate $ROT $CAM_OUT 2>&1 | tee $TOKEN1 &
+ssocr $DEBUG -T -d 6 rotate $ROT $CAM_OUT 2>/dev/null >$TOKEN1 &
 
-    if grep -q -E "[0-9]{6}" $TOKEN1; then
-        if [ -e $TOKEN2 ] && grep -q -E $(cat $TOKEN2) $TOKEN1 && [ $SYNCED -eq 0 ]; then
-            OCCURENCE=$(( OCCURENCE+1 ))
-            CYCLETOTAL=$(( $CYCLETOTAL+$TOTAL ))
-            case $OCCURENCE in
-                2)
-                   LOCAL_DELAY=1
-                   echo ""
-                   echo -n "saw this number $(($OCCURENCE+1)) times in $CYCLETOTAL seconds - sleeping for $LOCAL_DELAY second(s)"
-                   CYCLETOTAL=$(( $CYCLETOTAL+$LOCAL_DELAY ))
-                   sleep $LOCAL_DELAY
-                ;;
-                3)
-                   LOCAL_DELAY=$(( 60-$CYCLETOTAL+60-$TOTAL ))
-                   echo ""
-                   echo -n "saw this number $(($OCCURENCE+1)) times in $CYCLETOTAL seconds - sleeping for $LOCAL_DELAY seconds"
-                   #echo " s" >>$TOKEN2
-                   sleep $LOCAL_DELAY
-                   SYNCED=1
-                   OCCURENCE=0
-                   DELAY=$(( 60-$TOTAL ))
-                   # signal that the token is likely stale
-                ;;
-            esac
-        else
-            if [ $SYNCED -eq 1 ]; then
-                DELAY=$(( 60-$TOTAL ))
+sleep 1
+
+if grep -q -E "[0-9]{6}" $TOKEN1; then
+    #echo "saw a number ($(cat $TOKEN1))"
+    # if not synced
+    if grep -v -q "synced" $OCR_META || [ ! -s $OCR_META ]
+        then
+            #echo "not synced yet"
+            # if there is not enough data
+            if [ $(tail -$c $OCR_META | wc -l) -ne $c ]
+                then
+                    #echo "collecting data"
+                    # if this is a new number
+                    if grep -v -q $(cat $TOKEN1) $TOKEN2 || [ ! -s $OCR_META ]
+                        then
+                            # create a new line with 0 weight
+                            echo "$(date +%S) 0" | tee -a $OCR_META
+                        else
+                            # if repeat, increase weigth
+                            current_weight=$(tail -1 /tmp/ocr_meta 2>/dev/null | cut -d' ' -f 2)
+                            weight=$(expr $current_weight + 1)
+                            echo new weight = $weight
+                            if [ $(tail -1 /tmp/ocr_meta 2>/dev/null | wc -c) == "3" ]
+                                then
+                                    sed -i -e "\$a $weight" $OCR_META
+                                else
+                                    sed -i -e "$ s/\([0-9]\{2\} \).*/\1$weight/g" $OCR_META
+                            fi
+                    fi 
+                else
+                    sum=0
+                    for i in $(sort -k 2 -n $OCR_META | tail -$c | cut -f 1 -d' '); do
+                        sum=$(expr $sum + $i)
+                    done
+                    avg=$(expr $sum / $c)
+                    echo synced to $avg seconds
+                    echo "synced $avg" >$OCR_META
             fi
-            CYCLETOTAL=0
-            OCCURENCE=0
-        fi
-        cp $TOKEN1 $TOKEN2
-    else
-	if [ $DEBUG -eq 1 ]; then
-	    cp $OCR_DEBUG_OUT /tmp/$(date +%s)--ocr.jpg
-	fi
-        CYCLETOTAL=0
-        OCCURENCE=0
-        DELAY=0
-        SYNCED=0
-	echo -n " s" >>$TOKEN2
-        #cp $CAM_OUT /tmp/$(date +%s)-pic.jpg
-    fi
-
-    echo ""
-    #echo "pic: $(( $SSOCR_STARTED_AT-$STARTED_AT )) ocr: $(( $FOUND_A_NUMBER_AT-$SSOCR_STARTED_AT )) total: $(( $FOUND_A_NUMBER_AT-$STARTED_AT ))"
-done
+    fi 
+    cp $TOKEN1 $TOKEN2
+fi
