@@ -8,7 +8,8 @@ TOKEN1="/tmp/token1"
 TOKEN2="/tmp/token2"
 # "precision" when syncing
 # the amount of samples used for the average in determining the token change phase
-c=10
+SYNC_COUNT=5
+SYNC_THRESHOLD=12
 
 if [ ! -e $OCR_META ]; then
     touch $OCR_META
@@ -56,8 +57,8 @@ if grep -q -E "[0-9]{6}" $TOKEN1; then
     if grep -v -q "synced" $OCR_META || [ ! -s $OCR_META ]
         then
             #echo "not synced yet"
-            # if there is not enough data
-            if [ $(tail -$c $OCR_META | wc -l) -ne $c ]
+            # if there is not enough good quality data
+            if [ $(awk $SYNC_THRESHOLD'<$2' $OCR_META | tail -$SYNC_COUNT | wc -l) -ne $SYNC_COUNT ]
                 then
                     #echo "collecting data"
                     # if this is a new number
@@ -70,22 +71,20 @@ if grep -q -E "[0-9]{6}" $TOKEN1; then
                             current_weight=$(tail -1 /tmp/ocr_meta 2>/dev/null | cut -d' ' -f 2)
                             weight=$(expr $current_weight + 1)
                             echo new weight = $weight
-                            if [ $(tail -1 /tmp/ocr_meta 2>/dev/null | wc -c) == "3" ]
-                                then
-                                    sed -i -e "\$a $weight" $OCR_META
-                                else
-                                    sed -i -e "$ s/\([0-9]\{2\} \).*/\1$weight/g" $OCR_META
-                            fi
+                            sed -i -e "$ s/\([0-9]\{2\} \).*/\1$weight/g" $OCR_META
                     fi 
                 else
                     sum=0
-                    for i in $(sort -k 2 -n $OCR_META | tail -$c | cut -f 1 -d' '); do
+                    for i in $(sort -k 2 -n $OCR_META | tail -$SYNC_COUNT | cut -f 1 -d' '); do
                         sum=$(expr $sum + $i)
                     done
-                    avg=$(expr $sum / $c)
+                    avg=$(expr $sum / $SYNC_COUNT)
                     echo synced to $avg seconds
                     echo "synced $avg" >$OCR_META
             fi
     fi 
     cp $TOKEN1 $TOKEN2
+    else
+        cat $TOKEN1
 fi
+
