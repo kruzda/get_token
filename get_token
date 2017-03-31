@@ -1,11 +1,13 @@
 #!/bin/bash
 PATH=$PATH:/opt/vc/bin:/root:/usr/local/bin/
+
 # choose a memdisk here to avoid wearing out sd card
 CAM_OUT="/tmp/cam_out.jpg"
 OCR_DEBUG_OUT="/tmp/ocr_debug.jpg"
 OCR_META="/tmp/ocr_meta"
 TOKEN1="/tmp/token1"
 TOKEN2="/tmp/token2"
+
 # "precision" when syncing
 # the amount of samples used for the average in determining the token change phase
 SYNC_COUNT=5
@@ -29,14 +31,16 @@ raspistill -q 95 -n -drc high -o $CAM_OUT -t 3
 # turn all leds off
 i2cset -y 1 0x70 0x00 0x00
 
+# image transformation options
 ROT=2
 C_X=150
-C_Y=730
+C_Y=740
 C_W=1380
 C_H=390
-SHEAR=0
+SHEAR=5
+
+# ssocr options
 IGNORE=10
-N=20
 THR=27
 DEBUG=""
 
@@ -44,46 +48,55 @@ if [ $1 = "--debug" ]; then
     DEBUG="--debug-image=$OCR_DEBUG_OUT"
 fi
 
+# imagemagick
 mogrify -crop "${C_W}x${C_H}+${C_X}+${C_Y}" -scale 25% $CAM_OUT
 #ssocr $DEBUG -T -d 6 -i $IGNORE rotate $ROT crop $C_X $C_Y $C_W $C_H shear $SHEAR remove_isolated opening 3 white_border 17 $CAM_OUT 2>&1 | tee $TOKEN1 &
 #ssocr $DEBUG -T -d 6 rotate $ROT $CAM_OUT 2>&1 | tee $TOKEN1 &
-ssocr $DEBUG -T -d 6 rotate $ROT $CAM_OUT 2>/dev/null >$TOKEN1 &
+ssocr $DEBUG -T -d 6 rotate $ROT shear $SHEAR $CAM_OUT 2>/dev/null >$TOKEN1 &
 
 sleep 1
 
-if grep -q -E "[0-9]{6}" $TOKEN1; then
-    #echo "saw a number ($(cat $TOKEN1))"
-    # if not synced
-    if grep -v -q "synced" $OCR_META || [ ! -s $OCR_META ]
-        then
-            #echo "not synced yet"
-            # if there is not enough good quality data
-            if [ $(awk $SYNC_THRESHOLD'<$2' $OCR_META | tail -$SYNC_COUNT | wc -l) -ne $SYNC_COUNT ]
-                then
-                    #echo "collecting data"
-                    # if this is a new number
-                    if grep -v -q $(cat $TOKEN1) $TOKEN2 || [ ! -s $OCR_META ]
-                        then
-                            # create a new line with 0 weight
-                            echo "$(date +%S) 0" | tee -a $OCR_META
-                        else
-                            # if repeat, increase weigth
-                            current_weight=$(tail -1 /tmp/ocr_meta 2>/dev/null | cut -d' ' -f 2)
-                            weight=$(expr $current_weight + 1)
-                            echo new weight = $weight
-                            sed -i -e "$ s/\([0-9]\{2\} \).*/\1$weight/g" $OCR_META
-                    fi 
-                else
-                    sum=0
-                    for i in $(sort -k 2 -n $OCR_META | tail -$SYNC_COUNT | cut -f 1 -d' '); do
-                        sum=$(expr $sum + $i)
-                    done
-                    avg=$(expr $sum / $SYNC_COUNT)
-                    echo synced to $avg seconds
-                    echo "synced $avg" >$OCR_META
-            fi
-    fi 
-    cp $TOKEN1 $TOKEN2
+# if a 6 digit number is seen
+if grep -q -E "[0-9]{6}" $TOKEN1
+    then
+        echo "saw a number ($(cat $TOKEN1))"
+        # if not synced
+        if grep -v -q "synced" $OCR_META || [ ! -s $OCR_META ]
+            then
+                #echo "not synced yet"
+                # if there is not enough good quality data
+                if [ $(awk $SYNC_THRESHOLD'<$2' $OCR_META | tail -$SYNC_COUNT | wc -l) -ne $SYNC_COUNT ]
+                    then
+                        #echo "collecting data"
+                        # if this is a new number
+                        if grep -v -q $(cat $TOKEN1) $TOKEN2 || [ ! -s $OCR_META ]
+                            then
+                                # create a new line with 0 weight
+                                echo "$(date +%S) 0" | tee -a $OCR_META
+                            else
+                                # if repeat, increase weigth
+                                current_weight=$(tail -1 /tmp/ocr_meta 2>/dev/null | cut -d' ' -f 2)
+                                weight=$(( $current_weight + 1 ))
+                                echo new weight = $weight
+                                sed -i -e "$ s/\([0-9]\{2\} \).*/\1$weight/g" $OCR_META
+                        fi 
+                    else
+                        sum=0
+                        for i in $(sort -k 2 -n $OCR_META | tail -$SYNC_COUNT | cut -f 1 -d' '); do
+                            sum=$(( $sum + $i ))
+                        done
+                        avg=$(( $sum / $SYNC_COUNT ))
+                        echo synced to $avg seconds
+                        echo "synced $avg" >$OCR_META
+                fi
+            else
+                current_second=$(date +%S)
+                synced_second=$(grep "synced" $OCR_META | cut -f 2 -d' ')
+                delay=$(( ($synced_second - $current_second + 60) % 60))
+                echo "${current_second}: waiting $delay seconds until synced second: $synced_second"
+                sleep $delay
+        fi 
+        cp $TOKEN1 $TOKEN2
     else
         cat $TOKEN1
 fi
